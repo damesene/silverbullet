@@ -1,6 +1,8 @@
 import { expect, test } from "vitest";
 import { createMockSystem } from "../../plug-api/system_mock.ts";
 import type { MQMessage } from "@silverbulletmd/silverbullet/type/datastore";
+import type { IndexTreeEvent } from "@silverbulletmd/silverbullet/type/event";
+import { indexParagraphs } from "./paragraph.ts";
 import { processIndexQueue } from "./queue.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -44,6 +46,29 @@ test("a file flagged as already cleared skips the per-file clear scan", async ()
   ]);
 
   expect(cleared).toEqual(["B.md"]);
+});
+
+test("config reads are cached for one batch, so a change applies from the next", async () => {
+  const { spacePrimitives, config, eventHook } = createMockSystem();
+  // The index plug's page:index handlers are not wired up in the mock
+  eventHook.addLocalListener("page:index", (event: IndexTreeEvent) =>
+    indexParagraphs(event.meta, {}, event.tree),
+  );
+  const enc = new TextEncoder();
+  await spacePrimitives.writeFile("A.md", enc.encode("Plain paragraph"));
+  await spacePrimitives.writeFile("B.md", enc.encode("Another paragraph"));
+
+  let reads = 0;
+  const origGet = config.get.bind(config);
+  config.get = ((key: string, defaultValue: any) => {
+    if (key === "index.paragraph.all") reads++;
+    return origGet(key, defaultValue);
+  }) as typeof config.get;
+
+  await processIndexQueue([msg("A.md"), msg("B.md")]);
+  expect(reads).toBe(1);
+  await processIndexQueue([msg("A.md")]);
+  expect(reads).toBe(2);
 });
 
 // Retry is the queue's job, not the message body's: a file that fails is

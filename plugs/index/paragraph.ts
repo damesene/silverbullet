@@ -12,7 +12,7 @@ import type {
   ObjectValue,
   PageMeta,
 } from "@silverbulletmd/silverbullet/type/index";
-import { system } from "@silverbulletmd/silverbullet/syscalls";
+import { indexConfig } from "./config_cache.ts";
 import { cleanAttributes, collectAttributes } from "./attribute.ts";
 import { stripPositionAttributes } from "./position_attributes.ts";
 
@@ -30,7 +30,7 @@ export async function indexParagraphs(
   frontmatter: FrontMatter,
   tree: ParseTree,
 ) {
-  const shouldIndexAll = await system.getConfig("index.paragraph.all", false);
+  const shouldIndexAll = await indexConfig("index.paragraph.all", false);
 
   const objects: ParagraphObject[] = [];
 

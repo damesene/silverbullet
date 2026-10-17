@@ -13,7 +13,7 @@ import type {
   ObjectValue,
   PageMeta,
 } from "@silverbulletmd/silverbullet/type/index";
-import { system } from "@silverbulletmd/silverbullet/syscalls";
+import { indexConfig } from "./config_cache.ts";
 import { cleanAttributes, collectAttributes } from "./attribute.ts";
 import { collectPageLinks } from "./relation.ts";
 
@@ -47,10 +47,10 @@ export async function indexItems(
   frontmatter: FrontMatter,
   tree: ParseTree,
 ) {
-  const shouldIndexAllItems = await system.getConfig("index.item.all", true);
-  const shouldIndexAllTasks = await system.getConfig("index.task.all", true);
+  const shouldIndexAllItems = await indexConfig("index.item.all", true);
+  const shouldIndexAllTasks = await indexConfig("index.task.all", true);
 
-  const taskStates = await system.getConfig("taskStates", {});
+  const taskStates = await indexConfig("taskStates", {});
   const allCompleteStates = completeStates.concat(
     Object.values(taskStates)
       .filter((ts: any) => ts.done)

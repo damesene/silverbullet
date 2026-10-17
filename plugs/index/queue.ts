@@ -14,8 +14,13 @@ import type {
   MQMessage,
 } from "@silverbulletmd/silverbullet/type/datastore";
 import type { IndexTreeEvent } from "@silverbulletmd/silverbullet/type/event";
+import { withIndexConfigCache } from "./config_cache.ts";
 
-export async function processIndexQueue(messages: MQMessage[]) {
+export function processIndexQueue(messages: MQMessage[]) {
+  return withIndexConfigCache(() => processBatch(messages));
+}
+
+async function processBatch(messages: MQMessage[]) {
   // During a fresh install's initial index, defer files the sync engine
   // hasn't delivered yet: indexing them now would re-download them through
   // the proxy, racing the sync engine for connections. On fast links sync
