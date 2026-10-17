@@ -117,6 +117,9 @@ async function indexFile(path: string, alreadyCleared: boolean) {
 }
 
 const uiUpdateInterval = 5000;
+// Each poll counts the whole queue three times, so not more often than the
+// progress bar needs
+const progressPollInterval = 200;
 
 // There is no reliable way to know the total number of queue items, so we'll keep track of the maximum observed queue size
 // and use that to calculate the progress percentage.
@@ -155,7 +158,7 @@ async function updateIndexProgressInUI() {
       await editor.hideProgress("index");
       lastProgressAt = 0;
     }
-    await sleep(40);
+    await sleep(progressPollInterval);
     totalQueued = await totalItemsQueued();
   }
   await editor.hideProgress("index");
