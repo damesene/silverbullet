@@ -141,3 +141,30 @@ test("a batch write that fails part way writes nothing", async () => {
   expect(await db.batchGet([["kept"]])).toEqual([undefined]);
   db.close();
 });
+
+test("query reads large ranges in order across chunks", async () => {
+  const db = new IndexedDBKvPrimitives("chunked-query");
+  await db.init();
+  const entries = Array.from({ length: 3000 }, (_, i) => ({
+    key: ["row", String(i).padStart(4, "0")],
+    value: i,
+  }));
+  await db.batchSet([...entries, { key: ["rowx", "0"], value: -1 }]);
+
+  const values: number[] = [];
+  for await (const { key, value } of db.query({ prefix: ["row"] })) {
+    expect(key[0]).toEqual("row");
+    values.push(value);
+  }
+  expect(values).toEqual(entries.map((e) => e.value));
+
+  // Stopping early and awaiting between rows both work
+  const firstFew: number[] = [];
+  for await (const { value } of db.query({ prefix: ["row"] })) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    firstFew.push(value);
+    if (firstFew.length === 20) break;
+  }
+  expect(firstFew).toEqual(values.slice(0, 20));
+  db.close();
+});

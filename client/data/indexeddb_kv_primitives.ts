@@ -5,6 +5,10 @@ import type { KV, KvKey } from "../../plug-api/types/datastore.ts";
 
 const sep = "\0";
 const objectStoreName = "data";
+// Rows per `query` chunk: the first chunk covers a message queue poll, later
+// ones double up to the maximum
+const minQueryChunk = 16;
+const maxQueryChunk = 1024;
 
 export type IndexedDBKvOptions = {
   /**
@@ -120,15 +124,37 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
     await Promise.all([tx.store.delete(this.prefixRange(prefix)), tx.done]);
   }
 
-  // Important IndexedDB limitation: no asynchronous processing can happen
-  // in the body of the for await: https://stackoverflow.com/a/51898463
+  /**
+   * Reads the range in chunks, each one getAllKeys and one getAll request,
+   * instead of a cursor step (a task and microtasks) per row. Chunks start
+   * small for callers that stop early, such as the message queue's poll, and
+   * grow from there. Each chunk is its own transaction, so consumers may
+   * await between rows; writes in between can show up in later chunks.
+   */
   async *query({ prefix }: KvQueryOptions): AsyncIterableIterator<KV> {
     idbStats.scans++;
-    const tx = await this.transaction("readonly");
-    prefix = prefix || [];
-    for await (const entry of tx.store.iterate(this.prefixRange(prefix))) {
-      idbStats.rowsScanned++;
-      yield { key: this.extractKey(entry.key), value: entry.value };
+    const range = this.prefixRange(prefix || []);
+    let after: string | undefined;
+    let chunkSize = minQueryChunk;
+    while (true) {
+      const tx = await this.transaction("readonly");
+      const chunkRange =
+        after === undefined
+          ? range
+          : IDBKeyRange.bound(after, range.upper, true, false);
+      const [keys, values] = await Promise.all([
+        tx.store.getAllKeys(chunkRange, chunkSize),
+        tx.store.getAll(chunkRange, chunkSize),
+      ]);
+      for (let i = 0; i < keys.length; i++) {
+        idbStats.rowsScanned++;
+        yield { key: this.extractKey(keys[i] as string), value: values[i] };
+      }
+      if (keys.length < chunkSize) {
+        return;
+      }
+      after = keys[keys.length - 1] as string;
+      chunkSize = Math.min(chunkSize * 2, maxQueryChunk);
     }
   }
 
