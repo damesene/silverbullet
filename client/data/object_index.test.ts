@@ -511,6 +511,25 @@ test("touched tags fire once each, after the index queue drains", async () => {
   expect(fired).toEqual(["task"]);
 });
 
+test("writes during a full reindex flush when the queue drains, not on idle pauses", async () => {
+  vi.useFakeTimers();
+  try {
+    const { index, eventHook } = await makeIndex();
+    const fired: string[] = [];
+    eventHook.addLocalListener("index:tag:item", () => fired.push("item"));
+    index.rebuildInProgress = true;
+    await index.indexObjects("P", [
+      { ref: "P@1", tag: "item", name: "x" } as any,
+    ]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fired).toEqual([]);
+    await eventHook.dispatchEvent("mq:emptyQueue:indexQueue");
+    expect(fired).toEqual(["item"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("writes outside the queue flush after an idle pause", async () => {
   vi.useFakeTimers();
   try {

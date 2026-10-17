@@ -544,6 +544,8 @@ export class ObjectIndex {
       console.log("Full index completed after", Date.now() - startTime, "ms");
     } finally {
       this.rebuildInProgress = false;
+      // Covers a rebuild that ended without draining the queue
+      void this.flushChangedTags();
     }
   }
 
@@ -675,11 +677,16 @@ export class ObjectIndex {
     try {
       await write();
       for (const tag of tags) this.changedTags.add(tag);
-      clearTimeout(this.flushTimer);
-      this.flushTimer = setTimeout(
-        () => void this.flushChangedTags(),
-        ObjectIndex.TAG_FLUSH_IDLE_MS,
-      );
+      // A full reindex flushes once, when the queue drains. Flushing on idle
+      // pauses mid-rebuild makes live queries rescan whole tags, which stalls
+      // indexing into more idle pauses: a reindex then took 6x as long.
+      if (!this.rebuildInProgress) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = setTimeout(
+          () => void this.flushChangedTags(),
+          ObjectIndex.TAG_FLUSH_IDLE_MS,
+        );
+      }
     } finally {
       this.invalidateScanMemo(tags);
     }
