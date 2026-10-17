@@ -212,6 +212,17 @@ export function indexSyscalls(
       description: "Indexes a collection of objects for a page.",
       signatures: ["index.indexObjects(page, objects)"],
     },
+    "index.indexObjectsBatch": {
+      callback: (
+        _ctx,
+        entries: { page: string; objects: ObjectValue[] }[],
+      ): Promise<(string | null)[]> => {
+        return objectIndex.indexObjectsBatch(entries);
+      },
+      description:
+        "Indexes objects for several pages in one write, like `index.indexObjects` for each page. An entry that fails does not stop the others; the result has its error message at that entry's position, null for entries that were written.",
+      signatures: ["index.indexObjectsBatch(entries)"],
+    },
     "index.validateObjects": {
       callback: async (
         _ctx,

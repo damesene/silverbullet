@@ -3,13 +3,14 @@ import {
   collectNodesOfType,
   type ParseTree,
 } from "@silverbulletmd/silverbullet/lib/tree";
-import { index, markdown } from "@silverbulletmd/silverbullet/syscalls";
+import { markdown } from "@silverbulletmd/silverbullet/syscalls";
 import type { IndexTreeEvent } from "@silverbulletmd/silverbullet/type/event";
 import type {
   ObjectValue,
   PageMeta,
 } from "@silverbulletmd/silverbullet/type/index";
 import { isValidAnchorName } from "./anchor.ts";
+import { indexObjectsBatched } from "./batched_index.ts";
 import { containsConflictMarkers } from "./conflict.ts";
 import { indexData } from "./data.ts";
 import { extractFrontMatter, type FrontMatter } from "./frontmatter.ts";
@@ -247,7 +248,7 @@ export async function indexPage({ name, tree, meta, text }: IndexTreeEvent) {
     // otherwise lose it the moment file:changed clears its old entry.
     const pageObject: ObjectValue<any> = { ...meta };
     updateITags(pageObject, { tags: [] });
-    await index.indexObjects<any>(name, [pageObject, ...paragraphs]);
+    await indexObjectsBatched(name, [pageObject, ...paragraphs]);
     return;
   }
 
@@ -255,7 +256,7 @@ export async function indexPage({ name, tree, meta, text }: IndexTreeEvent) {
   const indexResults = await Promise.all(
     allIndexers.map((indexer) => indexer(meta, frontmatter, tree, text)),
   );
-  await index.indexObjects<any>(
+  await indexObjectsBatched(
     name,
     postProcessIndexed(indexResults.flat(), meta, frontmatter, tree, text),
   );

@@ -104,6 +104,20 @@ Returns all headers, optionally filtered by an additional tag, as a query collec
 
 Indexes a collection of objects for a page.
 
+## index.indexObjectsBatch
+
+`index.indexObjectsBatch(entries)`
+
+Indexes objects for several pages in one write, like `index.indexObjects` for each page. An entry that fails does not stop the others; the result has its error message at that entry's position, null for entries that were written.
+
+**Parameters:**
+
+- `entries` (`table`) — A list of `{page, objects}`, one per page.
+
+**Returns:**
+
+- `table` — Per entry, its error message, or null if it was written.
+
 ## index.isAvailable
 
 `index.isAvailable()`

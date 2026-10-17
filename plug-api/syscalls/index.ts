@@ -22,6 +22,18 @@ export function indexObjects<T>(
   return syscall("index.indexObjects", page, objects);
 }
 
+/**
+ * Indexes objects for several pages in one write, like calling
+ * `indexObjects` for each page. An entry that fails does not stop the others.
+ * @param entries - Each page with its objects
+ * @returns Per entry, its error message, or null if it was written
+ */
+export function indexObjectsBatch<T>(
+  entries: { page: string; objects: ObjectValue<T>[] }[],
+): Promise<(string | null)[]> {
+  return syscall("index.indexObjectsBatch", entries);
+}
+
 export function validateObjects<T>(
   page: string,
   objects: ObjectValue<T>[],

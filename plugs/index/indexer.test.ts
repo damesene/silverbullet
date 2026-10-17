@@ -25,10 +25,14 @@ async function runIndexPageForTest(
   const originalSyscall = (globalThis as any).syscall;
   let captured: ObjectValue<any>[] = [];
   (globalThis as any).syscall = (syscallName: string, ...args: any[]) => {
+    // ObjectIndex drains the objects array in place (objects.shift()), so
+    // snapshot before it gets consumed.
     if (syscallName === "index.indexObjects") {
-      // ObjectIndex.indexObjects drains this array in place (objects.shift()),
-      // so snapshot before it gets consumed.
       captured = [...args[1]];
+    } else if (syscallName === "index.indexObjectsBatch") {
+      for (const entry of args[0]) {
+        if (entry.page === name) captured = [...entry.objects];
+      }
     }
     return originalSyscall(syscallName, ...args);
   };

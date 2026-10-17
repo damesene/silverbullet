@@ -440,6 +440,50 @@ test("a manual reindex flags rebuildInProgress for its duration", async () => {
   expect(objectIndex.rebuildInProgress).toBe(false);
 });
 
+test("indexObjectsBatch writes several pages in one write, like indexObjects per page", async () => {
+  const single = makeFreshSetup().objectIndex;
+  await single.indexObjects("A", [pageObject("A")]);
+  await single.indexObjects("B", [pageObject("B")]);
+
+  const { objectIndex } = makeFreshSetup();
+  const indexDs = (objectIndex as any).indexDs;
+  let writes = 0;
+  const batchSet = indexDs.batchSet.bind(indexDs);
+  indexDs.batchSet = (entries: any[]) => {
+    writes++;
+    return batchSet(entries);
+  };
+  await objectIndex.indexObjectsBatch([
+    { page: "A", objects: [pageObject("A")] },
+    { page: "B", objects: [pageObject("B")] },
+  ]);
+  expect(writes).toEqual(1);
+  const names = async (index: ObjectIndex) =>
+    (await queryWhere(index, "page", "true")).map((p: any) => p.name).sort();
+  expect(await names(objectIndex)).toEqual(await names(single));
+  expect(await indexDs.get(["ridx", "B", "page", "B"])).toBeTruthy();
+});
+
+test("indexObjectsBatch writes the other pages when one fails", async () => {
+  const { objectIndex } = makeFreshSetup();
+  (objectIndex as any).config.set("tags", {
+    broken: {
+      transform: () => {
+        throw new Error("bad transform");
+      },
+    },
+  });
+  const errors = await objectIndex.indexObjectsBatch([
+    { page: "A", objects: [{ ref: "A@1", tag: "broken", page: "A" } as any] },
+    { page: "B", objects: [pageObject("B")] },
+  ]);
+  expect(errors[0]).toContain("bad transform");
+  expect(errors[1]).toBeNull();
+  expect(await objectIndex.getObjectByRef("B", "page", "B")).toMatchObject({
+    name: "B",
+  });
+});
+
 test("clearIndex empties the index database and the legacy index in the general store", async () => {
   const ds = new DataStore(new MemoryKvPrimitives());
   const indexDs = new DataStore(new MemoryKvPrimitives());

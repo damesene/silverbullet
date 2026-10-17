@@ -796,21 +796,30 @@ export class ObjectIndex {
   }
 
   batchSet(page: string, kvs: KV[]): Promise<void> {
+    return this.batchSetPages([{ page, kvs }]);
+  }
+
+  // Writes the objects of several pages in one transaction
+  private batchSetPages(pages: { page: string; kvs: KV[] }[]): Promise<void> {
     const finalBatch: KV[] = [];
-    for (const { key, value } of kvs) {
-      finalBatch.push(
-        {
-          key: [indexKey, ...key, page],
-          value,
-        },
-        {
-          // Reverse key storage for quick deletions
-          key: [pageKey, page, ...key],
-          value: true,
-        },
-      );
+    const tags = new Set<string>();
+    for (const { page, kvs } of pages) {
+      for (const { key, value } of kvs) {
+        finalBatch.push(
+          {
+            key: [indexKey, ...key, page],
+            value,
+          },
+          {
+            // Reverse key storage for quick deletions
+            key: [pageKey, page, ...key],
+            value: true,
+          },
+        );
+        tags.add(String(key[0]));
+      }
     }
-    return this.writeInvalidating(tagsOf(kvs.map((kv) => kv.key)), () =>
+    return this.writeInvalidating(tags, () =>
       this.indexDs.batchSet(finalBatch),
     );
   }
@@ -896,6 +905,35 @@ export class ObjectIndex {
     } else {
       return Promise.resolve();
     }
+  }
+
+  /**
+   * `indexObjects` for several pages at once, written in one transaction
+   * instead of one per page. An entry that fails to process (e.g. a tag
+   * transform throws) does not hold back the others: the rest are written,
+   * and the result has the error message at that entry's position (null for
+   * entries that were written).
+   */
+  public async indexObjectsBatch<T>(
+    entries: { page: string; objects: ObjectValue<T>[] }[],
+  ): Promise<(string | null)[]> {
+    const pages: { page: string; kvs: KV[] }[] = [];
+    const errors: (string | null)[] = [];
+    for (const { page, objects } of entries) {
+      try {
+        const kvs = await this.processObjectsToKVs<T>(page, objects, false);
+        if (kvs.length > 0) {
+          pages.push({ page, kvs });
+        }
+        errors.push(null);
+      } catch (e: any) {
+        errors.push(e?.message ?? String(e));
+      }
+    }
+    if (pages.length > 0) {
+      await this.batchSetPages(pages);
+    }
+    return errors;
   }
 
   /**
