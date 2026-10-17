@@ -1,5 +1,5 @@
 import type { KvPrimitives, KvQueryOptions } from "./kv_primitives.ts";
-import { deleteDB, type IDBPDatabase, openDB } from "idb";
+import { deleteDB, type IDBPDatabase, openDB, unwrap } from "idb";
 
 import type { KV, KvKey } from "../../plug-api/types/datastore.ts";
 
@@ -96,21 +96,21 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
 
   async batchSet(entries: KV[]): Promise<void> {
     idbStats.writes += entries.length;
-    const tx = await this.transaction("readwrite");
-    await Promise.all([
-      ...entries.map(({ key, value }) =>
-        tx.store.put(value, this.buildKey(key)),
-      ),
-      tx.done,
-    ]);
+    const keys = entries.map(({ key }) => this.buildKey(key));
+    await this.writeBatch((store) => {
+      for (let i = 0; i < entries.length; i++) {
+        store.put(entries[i].value, keys[i]);
+      }
+    });
   }
 
   async batchDelete(keys: KvKey[]): Promise<void> {
-    const tx = await this.transaction("readwrite");
-    await Promise.all([
-      ...keys.map((key) => tx.store.delete(this.buildKey(key))),
-      tx.done,
-    ]);
+    const builtKeys = keys.map((key) => this.buildKey(key));
+    await this.writeBatch((store) => {
+      for (const key of builtKeys) {
+        store.delete(key);
+      }
+    });
   }
 
   // One range request instead of reading every key and deleting it
@@ -136,6 +136,26 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
     const tx = await this.transaction("readonly");
     prefix = prefix || [];
     return tx.store.count(this.prefixRange(prefix));
+  }
+
+  /**
+   * Issues the requests on the raw store and awaits only the transaction. A
+   * failed request aborts it, so a promise per request (a task and microtasks
+   * per row on the main thread) adds nothing.
+   */
+  private async writeBatch(
+    issue: (store: IDBObjectStore) => void,
+  ): Promise<void> {
+    const tx = await this.transaction("readwrite");
+    try {
+      issue(unwrap(tx.store));
+    } catch (e) {
+      // Requests issued so far must not commit
+      tx.done.catch(() => {});
+      tx.abort();
+      throw e;
+    }
+    await tx.done;
   }
 
   close() {

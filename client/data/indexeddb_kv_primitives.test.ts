@@ -112,3 +112,32 @@ test("close() during a pending reopen leaves no open connection", async () => {
   // A live connection would accept a new transaction
   expect(() => db.db.transaction("data", "readonly")).toThrow();
 });
+
+test("a batch write that fails part way writes nothing", async () => {
+  const db = new IndexedDBKvPrimitives("atomic-batch");
+  await db.init();
+  await db.batchSet([{ key: ["kept"], value: 1 }]);
+
+  // Functions cannot be stored: the second put throws
+  await expect(
+    db.batchSet([
+      { key: ["a"], value: 1 },
+      { key: ["b"], value: () => {} },
+    ]),
+  ).rejects.toThrow();
+  await expect(
+    db.batchSet([
+      { key: ["c"], value: 1 },
+      { key: ["d", 1 as any], value: 1 },
+    ]),
+  ).rejects.toThrow("Key needs to consists of strings");
+  expect(await db.batchGet([["kept"], ["a"], ["c"]])).toEqual([
+    1,
+    undefined,
+    undefined,
+  ]);
+
+  await db.batchDelete([["kept"]]);
+  expect(await db.batchGet([["kept"]])).toEqual([undefined]);
+  db.close();
+});
