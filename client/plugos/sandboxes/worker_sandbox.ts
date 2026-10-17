@@ -8,6 +8,17 @@ import { fsEndpoint } from "../../spaces/constants.ts";
 import { emitRuntimeLog } from "../../lib/runtime_log.ts";
 
 /**
+ * Per-session counters of plug worker traffic, for perf analysis. Exposed as
+ * globalThis.sbWorkerStats.
+ */
+export const workerStats = {
+  messagesToWorkers: 0,
+  messagesFromWorkers: 0,
+  syscalls: {} as Record<string, number>,
+};
+(globalThis as any).sbWorkerStats = workerStats;
+
+/**
  * Effectively this wraps a web worker, the reason to have this split from Plugs is to allow plugs to manage multiple sandboxes, e.g. for performance in the future
  */
 export class WorkerSandbox<HookT> implements Sandbox<HookT> {
@@ -80,14 +91,19 @@ export class WorkerSandbox<HookT> implements Sandbox<HookT> {
   }
 
   async onMessage(data: ControllerMessage) {
+    workerStats.messagesFromWorkers++;
     if (!this.worker) {
       console.warn("Received message for terminated worker, ignoring");
       return;
     }
     switch (data.type) {
       case "sys":
+        workerStats.syscalls[data.name!] =
+          (workerStats.syscalls[data.name!] ?? 0) + 1;
         try {
           const result = await this.plug.syscall(data.name!, data.args!);
+
+          workerStats.messagesToWorkers++;
 
           this.worker &&
             this.worker!.postMessage({
@@ -96,6 +112,7 @@ export class WorkerSandbox<HookT> implements Sandbox<HookT> {
               result: result,
             } as WorkerMessage);
         } catch (e: any) {
+          workerStats.messagesToWorkers++;
           this.worker &&
             this.worker!.postMessage({
               type: "sysr",
@@ -132,6 +149,7 @@ export class WorkerSandbox<HookT> implements Sandbox<HookT> {
       await this.init();
     }
     this.reqId++;
+    workerStats.messagesToWorkers++;
     this.worker!.postMessage({
       type: "inv",
       id: this.reqId,

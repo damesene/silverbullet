@@ -77,6 +77,61 @@ export class ObjectValidationError extends Error {
   }
 }
 
+/**
+ * Phase timings of a full reindex, logged as `[reindex-timing]` to compare
+ * runs, with the deltas of the `sbIdbStats` and `sbWorkerStats` counters
+ * when available.
+ */
+function reindexTiming() {
+  const counters = () => ({
+    idb: (globalThis as any).sbIdbStats,
+    worker: (globalThis as any).sbWorkerStats,
+  });
+  const before = structuredClone(counters());
+  const start = performance.now();
+  let last = start;
+  const phases: Record<string, number> = {};
+  return {
+    phase(name: string) {
+      const now = performance.now();
+      phases[name] = Math.round(now - last);
+      last = now;
+      console.log("[reindex-timing]", name, phases[name], "ms");
+    },
+    done(files: number) {
+      const totalMs = Math.round(performance.now() - start);
+      const { idb, worker } = counterDelta(counters(), before);
+      console.log(
+        "[reindex-timing] summary",
+        JSON.stringify({ files, totalMs, phases, idb, worker }),
+      );
+    },
+  };
+}
+
+// Counter differences, recursing into nested counter maps and keeping only
+// the ones that changed
+function counterDelta(now: any, before: any): any {
+  if (typeof now === "number") {
+    return now - (before ?? 0);
+  }
+  if (!now || typeof now !== "object") {
+    return undefined;
+  }
+  const delta: Record<string, any> = {};
+  for (const [key, value] of Object.entries(now)) {
+    const d = counterDelta(value, before?.[key]);
+    if (
+      d !== undefined &&
+      d !== 0 &&
+      !(typeof d === "object" && !Object.keys(d).length)
+    ) {
+      delta[key] = d;
+    }
+  }
+  return delta;
+}
+
 export class ObjectIndex {
   // True while a wholesale reindex (manual or version-bump) is running in
   // this window
@@ -516,6 +571,7 @@ export class ObjectIndex {
     // wholesale rebuild, and `fullIndexCompleted` never flips back to false
     // after a first boot.
     this.rebuildInProgress = true;
+    const timing = reindexTiming();
     try {
       // Record that a reindex is underway *before* we delete the version key,
       // so an interruption between here and `markFullIndexComplete` is
@@ -526,8 +582,10 @@ export class ObjectIndex {
       await this.markFullIndexInComplete();
       console.log("Clearing page index...");
       await this.clearIndex();
+      timing.phase("clearIndex");
 
       const files = await space.deduplicatedFileList();
+      timing.phase("fileList");
 
       console.log("Queing", files.length, "pages to be indexed.");
       const startTime = Date.now();
@@ -539,9 +597,12 @@ export class ObjectIndex {
           (file): IndexQueueBody => ({ path: file.name, cleared: true }),
         ),
       );
+      timing.phase("enqueue");
       await this.mq.awaitEmptyQueue("indexQueue");
+      timing.phase("indexing");
       await this.markFullIndexComplete();
       console.log("Full index completed after", Date.now() - startTime, "ms");
+      timing.done(files.length);
     } finally {
       this.rebuildInProgress = false;
       // Covers a rebuild that ended without draining the queue
@@ -880,12 +941,30 @@ export class ObjectIndex {
     // during the clear may still see the old rows
     this.invalidateScanMemo();
     try {
+      const clearStart = performance.now();
+      const rowsBefore = await this.indexDs.kv.countQuery({});
+      const countMs = Math.round(performance.now() - clearStart);
       await this.indexDs.kv.clear();
+      const clearMs = Math.round(performance.now() - clearStart) - countMs;
       // Before `firstIndexDbVersion` the index lived in the general data
       // store. Drop what is left of it there; once that is gone these are
       // empty range deletes.
+      const legacyRows =
+        (await this.ds.kv.countQuery({ prefix: [indexKey] })) +
+        (await this.ds.kv.countQuery({ prefix: [pageKey] }));
+      const legacyStart = performance.now();
       await this.ds.batchDeletePrefix([indexKey]);
       await this.ds.batchDeletePrefix([pageKey]);
+      console.log(
+        "[reindex-timing] clearIndex detail",
+        JSON.stringify({
+          indexRows: rowsBefore,
+          countMs,
+          clearMs,
+          legacyRows,
+          legacyDeleteMs: Math.round(performance.now() - legacyStart),
+        }),
+      );
     } finally {
       this.invalidateScanMemo();
     }

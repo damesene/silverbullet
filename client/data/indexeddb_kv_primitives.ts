@@ -31,6 +31,9 @@ export const idbStats = {
   scans: 0,
   rowsScanned: 0,
   writes: 0,
+  deletes: 0,
+  counts: 0,
+  transactions: 0,
 };
 (globalThis as any).sbIdbStats = idbStats;
 
@@ -109,6 +112,7 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
   }
 
   async batchDelete(keys: KvKey[]): Promise<void> {
+    idbStats.deletes += keys.length;
     const builtKeys = keys.map((key) => this.buildKey(key));
     await this.writeBatch((store) => {
       for (const key of builtKeys) {
@@ -159,6 +163,7 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
   }
 
   async countQuery({ prefix }: KvQueryOptions): Promise<number> {
+    idbStats.counts++;
     const tx = await this.transaction("readonly");
     prefix = prefix || [];
     return tx.store.count(this.prefixRange(prefix));
@@ -205,6 +210,7 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
       }
       const pending = this.reopening;
       if (!pending) {
+        idbStats.transactions++;
         return this.db.transaction(objectStoreName, mode);
       }
       // A failed reopen fails this operation too; the next one retries
