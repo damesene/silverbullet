@@ -56,7 +56,13 @@ export function createMockSystem() {
     serverPingMs: undefined,
   };
 
-  const objectIndex = new ObjectIndex(ds, config, eventHook, mq);
+  const objectIndex = new ObjectIndex(
+    ds,
+    new DataStore(new MemoryKvPrimitives()),
+    config,
+    eventHook,
+    mq,
+  );
 
   const clientSystemMock: any = {
     system: system,

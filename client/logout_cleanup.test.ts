@@ -5,10 +5,13 @@ import { deleteLocalSpaceData } from "./logout_cleanup.ts";
 
 test("deletes SilverBullet databases directly, including open connections, and leaves unrelated data", async () => {
   const local = new IndexedDBKvPrimitives(`sb_data_${"a".repeat(64)}`);
+  const index = new IndexedDBKvPrimitives(`sb_index_${"a".repeat(64)}`);
   const unrelated = new IndexedDBKvPrimitives("unrelated-app");
   await local.init();
+  await index.init();
   await unrelated.init();
   await local.batchSet([{ key: ["note"], value: "Private draft" }]);
+  await index.batchSet([{ key: ["idx", "page"], value: "Private draft" }]);
   await unrelated.batchSet([{ key: ["keep"], value: "Other application" }]);
   const values = new Map([
     ["silverbullet.https://notes.example/.CONFIG.md", "Private config"],
@@ -25,13 +28,14 @@ test("deletes SilverBullet databases directly, including open connections, and l
   });
   try {
     await deleteLocalSpaceData();
-    expect((await indexedDB.databases()).map((db) => db.name)).not.toContain(
-      `sb_data_${"a".repeat(64)}`,
-    );
+    const remaining = (await indexedDB.databases()).map((db) => db.name);
+    expect(remaining).not.toContain(`sb_data_${"a".repeat(64)}`);
+    expect(remaining).not.toContain(`sb_index_${"a".repeat(64)}`);
     expect(await unrelated.batchGet([["keep"]])).toEqual(["Other application"]);
     expect([...values]).toEqual([["unrelated", "keep"]]);
   } finally {
     local.close();
+    index.close();
     unrelated.close();
     vi.unstubAllGlobals();
   }

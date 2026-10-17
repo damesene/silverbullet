@@ -1,4 +1,10 @@
+import { spaceDbTypes } from "../plug-api/lib/crypto.ts";
 import { clearLogoutState } from "./logout_state.ts";
+
+const spaceDbNamePattern = new RegExp(
+  `^sb_(${spaceDbTypes.join("|")})_[a-f0-9]{64}$`,
+);
+
 export async function deleteLocalSpaceData(): Promise<void> {
   const keys = Array.from({ length: localStorage.length }, (_, index) =>
     localStorage.key(index),
@@ -16,7 +22,7 @@ export async function deleteLocalSpaceData(): Promise<void> {
   const databases = await indexedDB.databases();
   const deletions = await Promise.allSettled(
     databases.flatMap(({ name }) =>
-      name && /^sb_(data|files)_[a-f0-9]{64}$/.test(name)
+      name && spaceDbNamePattern.test(name)
         ? [
             new Promise<void>((resolve, reject) => {
               const request = indexedDB.deleteDatabase(name);

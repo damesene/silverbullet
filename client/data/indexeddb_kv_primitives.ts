@@ -1,10 +1,21 @@
 import type { KvPrimitives, KvQueryOptions } from "./kv_primitives.ts";
-import { type IDBPDatabase, openDB } from "idb";
+import { deleteDB, type IDBPDatabase, openDB } from "idb";
 
 import type { KV, KvKey } from "../../plug-api/types/datastore.ts";
 
 const sep = "\0";
 const objectStoreName = "data";
+
+export type IndexedDBKvOptions = {
+  /**
+   * For a database holding only disposable data, such as the object index:
+   * `clear()` deletes the whole database, which unlike clearing a store does
+   * not take time proportional to its size. Once the database was deleted, by
+   * this or another window, connections reopen it on next use, as long as
+   * `canReconnect` allows it.
+   */
+  disposable?: { canReconnect: () => boolean };
+};
 
 /**
  * Per-session counters of IndexedDB traffic, for boot/perf analysis. Exposed
@@ -21,42 +32,71 @@ export const idbStats = {
 
 export class IndexedDBKvPrimitives implements KvPrimitives {
   db!: IDBPDatabase<any>;
+  // Pending deletion and reopening of a disposable database, which
+  // operations wait for
+  private reopening?: Promise<void>;
+  // The connection was closed because the database was deleted (or reopening
+  // it failed); a disposable database reopens it on next use
+  private deleted = false;
+  // Closed by its owner: stays closed, even when a reopen was pending
+  private closed = false;
 
-  constructor(private dbName: string) {}
+  constructor(
+    private dbName: string,
+    private options: IndexedDBKvOptions = {},
+  ) {}
+
+  /**
+   * True once another window deleted this database, as on logout, until this
+   * connection reopens it
+   */
+  get wasDeleted(): boolean {
+    return this.deleted;
+  }
 
   async init() {
-    this.db = await openDB(this.dbName, 1, {
-      blocking: () => this.db.close(),
+    const db: IDBPDatabase<any> = await openDB(this.dbName, 1, {
+      blocking: (_currentVersion, blockedVersion) => {
+        // Close the connection the event is for, which a reopen may have
+        // replaced since
+        db.close();
+        // No new version: another window is deleting the database
+        if (blockedVersion === null && this.db === db) {
+          this.deleted = true;
+        }
+      },
       upgrade: (db) => {
         db.createObjectStore(objectStoreName);
       },
     });
+    this.db = db;
+    this.deleted = false;
   }
 
   async clear(): Promise<void> {
-    const objectStoreNames = this.db.objectStoreNames;
-
-    const tx = this.db.transaction(objectStoreNames, "readwrite");
-
-    const clearPromises = Array.from(objectStoreNames).map((storeName) =>
-      tx.objectStore(storeName).clear(),
-    );
-
-    await Promise.all(clearPromises);
-
-    await tx.done;
+    if (this.options.disposable) {
+      return this.reopen(async () => {
+        this.db.close();
+        await deleteDB(this.dbName, {
+          blocked: () =>
+            console.warn("Waiting for other windows to close", this.dbName),
+        });
+      });
+    }
+    const tx = await this.transaction("readwrite");
+    await Promise.all([tx.store.clear(), tx.done]);
   }
 
-  batchGet(keys: KvKey[]): Promise<any[]> {
+  async batchGet(keys: KvKey[]): Promise<any[]> {
     idbStats.batchGetCalls++;
     idbStats.keysRequested += keys.length;
-    const tx = this.db.transaction(objectStoreName, "readonly");
+    const tx = await this.transaction("readonly");
     return Promise.all(keys.map((key) => tx.store.get(this.buildKey(key))));
   }
 
   async batchSet(entries: KV[]): Promise<void> {
     idbStats.writes += entries.length;
-    const tx = this.db.transaction(objectStoreName, "readwrite");
+    const tx = await this.transaction("readwrite");
     await Promise.all([
       ...entries.map(({ key, value }) =>
         tx.store.put(value, this.buildKey(key)),
@@ -66,7 +106,7 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
   }
 
   async batchDelete(keys: KvKey[]): Promise<void> {
-    const tx = this.db.transaction(objectStoreName, "readwrite");
+    const tx = await this.transaction("readwrite");
     await Promise.all([
       ...keys.map((key) => tx.store.delete(this.buildKey(key))),
       tx.done,
@@ -76,7 +116,7 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
   // One range request instead of reading every key and deleting it
   // individually
   async deletePrefix(prefix: KvKey): Promise<void> {
-    const tx = this.db.transaction(objectStoreName, "readwrite");
+    const tx = await this.transaction("readwrite");
     await Promise.all([tx.store.delete(this.prefixRange(prefix)), tx.done]);
   }
 
@@ -84,7 +124,7 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
   // in the body of the for await: https://stackoverflow.com/a/51898463
   async *query({ prefix }: KvQueryOptions): AsyncIterableIterator<KV> {
     idbStats.scans++;
-    const tx = this.db.transaction(objectStoreName, "readonly");
+    const tx = await this.transaction("readonly");
     prefix = prefix || [];
     for await (const entry of tx.store.iterate(this.prefixRange(prefix))) {
       idbStats.rowsScanned++;
@@ -92,14 +132,64 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
     }
   }
 
-  countQuery({ prefix }: KvQueryOptions): Promise<number> {
-    const tx = this.db.transaction(objectStoreName, "readonly");
+  async countQuery({ prefix }: KvQueryOptions): Promise<number> {
+    const tx = await this.transaction("readonly");
     prefix = prefix || [];
     return tx.store.count(this.prefixRange(prefix));
   }
 
   close() {
+    this.closed = true;
     this.db.close();
+  }
+
+  /**
+   * Starts a transaction once no reopening is pending, reopening a deleted
+   * disposable database first. The transaction is created right after that
+   * check, without yielding, so a concurrent `clear()` cannot close the
+   * connection in between.
+   */
+  private async transaction<Mode extends IDBTransactionMode>(mode: Mode) {
+    while (true) {
+      if (this.deleted && !this.reopening && !this.closed) {
+        if (!this.options.disposable?.canReconnect()) {
+          throw new Error(`Database ${this.dbName} was deleted`);
+        }
+        void this.reopen(async () => {});
+      }
+      const pending = this.reopening;
+      if (!pending) {
+        return this.db.transaction(objectStoreName, mode);
+      }
+      // A failed reopen fails this operation too; the next one retries
+      await pending;
+    }
+  }
+
+  private reopen(beforeOpen: () => Promise<void>): Promise<void> {
+    const reopening = (this.reopening ?? Promise.resolve())
+      // A failed earlier reopen must not skip this one
+      .catch(() => {})
+      .then(beforeOpen)
+      .then(() => {
+        if (!this.closed) {
+          return this.init();
+        }
+      })
+      .catch((e) => {
+        // Retried on next use
+        this.deleted = true;
+        throw e;
+      });
+    this.reopening = reopening;
+    reopening
+      .finally(() => {
+        if (this.reopening === reopening) {
+          this.reopening = undefined;
+        }
+      })
+      .catch(() => {});
+    return reopening;
   }
 
   // All keys under `prefix`, matching whole key parts

@@ -62,11 +62,20 @@ export function randomUUID(): string {
 }
 
 /**
+ * The IndexedDB databases kept per space: synced files, client state and the
+ * object index. Code that finds, deletes or inspects a space's local data
+ * goes through this list, so it covers every database.
+ */
+export const spaceDbTypes = ["files", "data", "index"] as const;
+
+export type SpaceDbType = (typeof spaceDbTypes)[number];
+
+/**
  * To avoid database clashes based on space folder path name, base URLs and encryption keys we derive
  * a database name from a hash of all these combined together
  */
 export async function deriveDbName(
-  type: "data" | "files",
+  type: SpaceDbType,
   spaceFolderPath: string,
   baseURI: string,
   encryptionKey?: CryptoKey,

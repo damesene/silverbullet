@@ -46,7 +46,12 @@ const indexVersionKey = ["$indexVersion"];
 const reindexInProgressKey = ["$reindexInProgress"];
 
 // Bump this one every time a full reindex is needed
-const desiredIndexVersion = 14;
+const desiredIndexVersion = 15;
+
+// The first index version kept in a database of its own. Older versions left
+// their entries in the general data store, so the index database is still
+// empty.
+const firstIndexDbVersion = 15;
 
 type TagDefinition = {
   tagPage?: string;
@@ -78,7 +83,11 @@ export class ObjectIndex {
   public rebuildInProgress = false;
 
   constructor(
+    // General client state, including the index version and reindex marker
     private ds: DataStore,
+    // The index itself (`idx` and `ridx` keys), in a database of its own so a
+    // full reindex can drop it at once
+    private indexDs: DataStore,
     private config: Config,
     private eventHook: EventHook,
     private mq: DataStoreMQ,
@@ -416,7 +425,7 @@ export class ObjectIndex {
       // Look up the corresponding relation and project it. Relation
       // refs are bare `page@pos`, matching what virtual link records
       // expose, so the lookup key transfers as-is.
-      const rel = await this.ds.get([
+      const rel = await this.indexDs.get([
         indexKey,
         "relation",
         this.cleanKey(ref, page),
@@ -424,7 +433,7 @@ export class ObjectIndex {
       ]);
       return rel ? relationToLink(rel) : undefined;
     }
-    return this.ds.get([indexKey, tag, this.cleanKey(ref, page), page]);
+    return this.indexDs.get([indexKey, tag, this.cleanKey(ref, page), page]);
   }
 
   private reindexingForVersionBump = false;
@@ -462,10 +471,9 @@ export class ObjectIndex {
       await this.mq.awaitEmptyQueue("indexQueue");
 
       // Serialize the reindex across every open window/tab: the whole
-      // space lives in a single shared IndexedDB object store, and two
-      // windows clearing + rewriting it concurrently serialize on that
-      // one store and can wedge each other (one window's `get` blocks
-      // forever behind the other's bulk delete).
+      // index lives in a single IndexedDB database shared by all windows,
+      // and two windows dropping + rewriting it concurrently would wedge
+      // each other or interleave their writes.
       await this.withLock(async () => {
         // Re-read the version now that we hold the lock — another window
         // (or a concurrent path here) may have already completed the bump
@@ -513,9 +521,11 @@ export class ObjectIndex {
       // so an interruption between here and `markFullIndexComplete` is
       // recoverable (see `ensureFullIndex`).
       await this.markReindexInProgress();
+      // Drop the version before the index, so an index that was dropped by
+      // an interrupted reindex is never taken for a complete one
+      await this.markFullIndexInComplete();
       console.log("Clearing page index...");
       await this.clearIndex();
-      await this.markFullIndexInComplete();
 
       const files = await space.deduplicatedFileList();
 
@@ -560,10 +570,11 @@ export class ObjectIndex {
   /**
    * True once any full indexing pass has ever completed for this
    * space, regardless of whether the stored version matches the current
-   * `desiredIndexVersion`.
+   * `desiredIndexVersion`, as long as it filled the index database.
    */
   public async isIndexAvailable(): Promise<boolean> {
-    return (await this.getCurrentIndexVersion()) !== undefined;
+    const version = await this.getCurrentIndexVersion();
+    return version !== undefined && version >= firstIndexDbVersion;
   }
 
   async awaitIndexQueueDrain(): Promise<void> {
@@ -575,7 +586,9 @@ export class ObjectIndex {
    */
   private async findUnindexedPages(files: FileMeta[]): Promise<string[]> {
     const indexedPages = new Set<string>();
-    for await (const { key } of this.ds.query({ prefix: [indexKey, "page"] })) {
+    for await (const { key } of this.indexDs.query({
+      prefix: [indexKey, "page"],
+    })) {
       indexedPages.add(String(key[key.length - 1]));
     }
     const missing: string[] = [];
@@ -698,7 +711,7 @@ export class ObjectIndex {
     const generation = this.scanGeneration(tag);
     const scan = (async () => {
       const rows: KV[] = [];
-      for await (const row of this.ds.query({ prefix: [indexKey, tag] })) {
+      for await (const row of this.indexDs.query({ prefix: [indexKey, tag] })) {
         rows.push(row);
       }
       if (this.scanGeneration(tag) === generation) {
@@ -791,7 +804,7 @@ export class ObjectIndex {
       );
     }
     return this.writeInvalidating(tagsOf(kvs.map((kv) => kv.key)), () =>
-      this.ds.batchSet(finalBatch),
+      this.indexDs.batchSet(finalBatch),
     );
   }
 
@@ -801,7 +814,7 @@ export class ObjectIndex {
       finalBatch.push([indexKey, ...key, page]);
     }
     return this.writeInvalidating(tagsOf(keys), () =>
-      this.ds.batchDelete(finalBatch),
+      this.indexDs.batchDelete(finalBatch),
     );
   }
 
@@ -815,7 +828,7 @@ export class ObjectIndex {
     }
     const allKeys: KvKey[] = [];
     const indexKeys: KvKey[] = [];
-    for await (const { key } of this.ds.query({
+    for await (const { key } of this.indexDs.query({
       prefix: [pageKey, file],
     })) {
       allKeys.push(key);
@@ -823,7 +836,7 @@ export class ObjectIndex {
       indexKeys.push(key.slice(2));
     }
     await this.writeInvalidating(tagsOf(indexKeys), () =>
-      this.ds.batchDelete(allKeys),
+      this.indexDs.batchDelete(allKeys),
     );
   }
 
@@ -834,7 +847,9 @@ export class ObjectIndex {
    */
   public async tagNames(): Promise<string[]> {
     const names = new Set<string>();
-    for await (const entry of this.ds.query({ prefix: [indexKey, "tag"] })) {
+    for await (const entry of this.indexDs.query({
+      prefix: [indexKey, "tag"],
+    })) {
       const value = entry.value as { name?: unknown } | undefined;
       if (value && typeof value.name === "string") names.add(value.name);
     }
@@ -845,9 +860,19 @@ export class ObjectIndex {
    * Clears the entire index
    */
   public async clearIndex(): Promise<void> {
+    // Invalidates on both sides, like `writeInvalidating`: a scan starting
+    // during the clear may still see the old rows
     this.invalidateScanMemo();
-    await this.ds.batchDeletePrefix([indexKey]);
-    await this.ds.batchDeletePrefix([pageKey]);
+    try {
+      await this.indexDs.kv.clear();
+      // Before `firstIndexDbVersion` the index lived in the general data
+      // store. Drop what is left of it there; once that is gone these are
+      // empty range deletes.
+      await this.ds.batchDeletePrefix([indexKey]);
+      await this.ds.batchDeletePrefix([pageKey]);
+    } finally {
+      this.invalidateScanMemo();
+    }
     console.log("Cleared the index");
   }
 

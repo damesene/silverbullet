@@ -13,12 +13,12 @@ import { DataStoreMQ } from "./mq.datastore.ts";
 import { ObjectIndex } from "./object_index.ts";
 
 function makeObjectIndex(): ObjectIndex {
-  const kv = new MemoryKvPrimitives();
-  const ds = new DataStore(kv);
+  const ds = new DataStore(new MemoryKvPrimitives());
+  const indexDs = new DataStore(new MemoryKvPrimitives());
   const eventHook = new EventHook();
   const mq = new DataStoreMQ(ds, eventHook);
   const config = new Config();
-  return new ObjectIndex(ds, config, eventHook, mq);
+  return new ObjectIndex(ds, indexDs, config, eventHook, mq);
 }
 
 function makeCountingObjectIndex() {
@@ -34,11 +34,17 @@ function makeCountingObjectIndex() {
     }
     return origQuery(opts);
   };
-  const ds = new DataStore(kv);
+  const ds = new DataStore(new MemoryKvPrimitives());
   const eventHook = new EventHook();
   const mq = new DataStoreMQ(ds, eventHook);
   const config = new Config();
-  const objectIndex = new ObjectIndex(ds, config, eventHook, mq);
+  const objectIndex = new ObjectIndex(
+    ds,
+    new DataStore(kv),
+    config,
+    eventHook,
+    mq,
+  );
   return {
     objectIndex,
     config,
@@ -235,21 +241,22 @@ describe("ObjectIndex scan memoization", () => {
 
 function makeSharedStoreIndexes() {
   const ds = new DataStore(new MemoryKvPrimitives());
+  const indexDs = new DataStore(new MemoryKvPrimitives());
   const eventHook = new EventHook();
   const mq = new DataStoreMQ(ds, eventHook);
   const config = new Config();
-  return () => new ObjectIndex(ds, config, eventHook, mq);
+  return () => new ObjectIndex(ds, indexDs, config, eventHook, mq);
 }
 
 function makeFreshSetup() {
-  const kv = new MemoryKvPrimitives();
-  const ds = new DataStore(kv);
+  const ds = new DataStore(new MemoryKvPrimitives());
+  const indexDs = new DataStore(new MemoryKvPrimitives());
   const eventHook = new EventHook();
   const system = new System<EventHookT>(undefined);
   system.addHook(eventHook);
   const mq = new DataStoreMQ(ds, eventHook);
   const config = new Config();
-  const objectIndex = new ObjectIndex(ds, config, eventHook, mq);
+  const objectIndex = new ObjectIndex(ds, indexDs, config, eventHook, mq);
   return { objectIndex, eventHook, mq };
 }
 
@@ -433,12 +440,58 @@ test("a manual reindex flags rebuildInProgress for its duration", async () => {
   expect(objectIndex.rebuildInProgress).toBe(false);
 });
 
+test("clearIndex empties the index database and the legacy index in the general store", async () => {
+  const ds = new DataStore(new MemoryKvPrimitives());
+  const indexDs = new DataStore(new MemoryKvPrimitives());
+  const eventHook = new EventHook();
+  const mq = new DataStoreMQ(ds, eventHook);
+  const objectIndex = new ObjectIndex(ds, indexDs, new Config(), eventHook, mq);
+  await objectIndex.indexObjects("A", [pageObject("A")]);
+  expect(await indexDs.kv.countQuery({})).toBeGreaterThan(0);
+  // Left behind by index version 14 and older
+  await ds.batchSet<any>([
+    { key: ["idx", "page", "Old", "Old"], value: {} },
+    { key: ["ridx", "Old", "page", "Old"], value: true },
+    { key: ["aug", "pageMeta", "A"], value: { lastOpened: 1 } },
+  ]);
+
+  await objectIndex.clearIndex();
+
+  expect(await queryWhere(objectIndex, "page", "true")).toEqual([]);
+  expect(await indexDs.kv.countQuery({})).toEqual(0);
+  expect(await ds.get(["idx", "page", "Old", "Old"])).toBeFalsy();
+  expect(await ds.get(["ridx", "Old", "page", "Old"])).toBeFalsy();
+  expect(await ds.get(["aug", "pageMeta", "A"])).toEqual({ lastOpened: 1 });
+});
+
+test("an index from before the index database does not count as available", async () => {
+  const ds = new DataStore(new MemoryKvPrimitives());
+  const eventHook = new EventHook();
+  const objectIndex = new ObjectIndex(
+    ds,
+    new DataStore(new MemoryKvPrimitives()),
+    new Config(),
+    eventHook,
+    new DataStoreMQ(ds, eventHook),
+  );
+  await ds.set(["$indexVersion"], 14);
+  expect(await objectIndex.isIndexAvailable()).toBe(false);
+  await objectIndex.markFullIndexComplete();
+  expect(await objectIndex.isIndexAvailable()).toBe(true);
+});
+
 async function makeIndex() {
   const ds = new DataStore(new MemoryKvPrimitives());
   const eventHook = new EventHook();
   new System<EventHookT>(undefined).addHook(eventHook);
   const mq = new DataStoreMQ(ds, eventHook);
-  const index = new ObjectIndex(ds, new Config(), eventHook, mq);
+  const index = new ObjectIndex(
+    ds,
+    new DataStore(new MemoryKvPrimitives()),
+    new Config(),
+    eventHook,
+    mq,
+  );
   return { index, eventHook };
 }
 

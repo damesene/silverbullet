@@ -2,6 +2,7 @@ import {
   deriveDbName,
   hashSHA256,
   importKey,
+  spaceDbTypes,
 } from "@silverbulletmd/silverbullet/lib/crypto";
 import { openDB } from "idb";
 
@@ -224,14 +225,13 @@ export async function inspectEncryptionCache(
     );
   const names = (await indexedDB.databases()).map((database) => database.name);
   const baseURI = scope.replace(/\/$/, "");
-  const types = ["files", "data"] as const;
   const plain = await Promise.all(
-    types.map((type) => deriveDbName(type, spaceFolderPath, baseURI)),
+    spaceDbTypes.map((type) => deriveDbName(type, spaceFolderPath, baseURI)),
   );
   const importedKey = key ? await importKey(key) : undefined;
   const target = importedKey
     ? await Promise.all(
-        types.map((type) =>
+        spaceDbTypes.map((type) =>
           deriveDbName(type, spaceFolderPath, baseURI, importedKey),
         ),
       )
@@ -252,7 +252,8 @@ export async function inspectEncryptionCache(
     plainHasData,
     otherFiles: names.some(
       (name) =>
-        (name?.startsWith("sb_files_") || name?.startsWith("sb_data_")) &&
+        !!name &&
+        spaceDbTypes.some((type) => name.startsWith(`sb_${type}_`)) &&
         !plain.includes(name) &&
         !target.includes(name),
     ),

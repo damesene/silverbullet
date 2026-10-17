@@ -8,7 +8,10 @@ import type { Compartment, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { jitter, sleep } from "@silverbulletmd/silverbullet/lib/async";
-import { deriveDbName } from "@silverbulletmd/silverbullet/lib/crypto";
+import {
+  deriveDbName,
+  type SpaceDbType,
+} from "@silverbulletmd/silverbullet/lib/crypto";
 import {
   encodePageURI,
   encodeRef,
@@ -47,7 +50,10 @@ import { ContentManager } from "./content_manager.ts";
 import { Augmenter } from "./data/data_augmenter.ts";
 import { DataStore } from "./data/datastore.ts";
 import { EncryptedKvPrimitives } from "./data/encrypted_kv_primitives.ts";
-import { IndexedDBKvPrimitives } from "./data/indexeddb_kv_primitives.ts";
+import {
+  type IndexedDBKvOptions,
+  IndexedDBKvPrimitives,
+} from "./data/indexeddb_kv_primitives.ts";
 import type { KvPrimitives } from "./data/kv_primitives.ts";
 import { DataStoreMQ } from "./data/mq.datastore.ts";
 import { ObjectIndex } from "./data/object_index.ts";
@@ -61,7 +67,7 @@ import {
   registerLogoutParticipant,
   saveCurrentEditor,
 } from "./logout.ts";
-import { waitForLogout } from "./logout_state.ts";
+import { readLogoutState, waitForLogout } from "./logout_state.ts";
 import { isSafeUrl } from "./markdown_renderer/sanitize_html.ts";
 import { open as openNavigatorView } from "./navigator/navigator.ts";
 import {
@@ -188,6 +194,8 @@ export class Client {
   ui!: MainUI;
   readonly spaceStyles = new SpaceStyles(this);
   ds!: DataStore;
+  // The object index, in a database of its own
+  indexDs!: DataStore;
   mq!: DataStoreMQ;
   // Used to store additional pageMeta outside the page index itself persistent between client runs (specifically: lastOpened)
   pageMetaAugmenter!: Augmenter;
@@ -256,24 +264,44 @@ export class Client {
    */
   async init(encryptionKey?: CryptoKey) {
     recordMark("sb:client-init");
-    const dbName = await deriveDbName(
-      "data",
-      this.bootConfig.spaceFolderPath,
-      document.baseURI.replace(/\/$/, ""),
-      encryptionKey,
-    );
-    const idbKvPrimitives = new IndexedDBKvPrimitives(dbName);
-    await timedSpan("idb-open", () => idbKvPrimitives.init());
-    let kvPrimitives: KvPrimitives = idbKvPrimitives;
-
-    console.log("Using IndexedDB database", dbName);
-
+    const openDb = async (type: SpaceDbType, options?: IndexedDBKvOptions) => {
+      const dbName = await deriveDbName(
+        type,
+        this.bootConfig.spaceFolderPath,
+        document.baseURI.replace(/\/$/, ""),
+        encryptionKey,
+      );
+      const db = new IndexedDBKvPrimitives(dbName, options);
+      await timedSpan(`idb-open-${type}`, () => db.init());
+      console.log("Using IndexedDB database", dbName);
+      return db;
+    };
+    const toDataStore = async (db: IndexedDBKvPrimitives) => {
+      let kvPrimitives: KvPrimitives = db;
+      if (encryptionKey) {
+        kvPrimitives = new EncryptedKvPrimitives(kvPrimitives, encryptionKey);
+        await (kvPrimitives as EncryptedKvPrimitives).init();
+      }
+      return new DataStore(kvPrimitives);
+    };
+    const [dataDb, indexDb] = await Promise.all([
+      openDb("data"),
+      // The index can be rebuilt from the space at any time, so a reindex
+      // drops the whole database instead of clearing it row by row. Logging
+      // out deletes it for good, together with the data database, so it must
+      // not be recreated then. The logout state alone is not enough: the
+      // cleanup removes it.
+      openDb("index", {
+        disposable: {
+          canReconnect: (): boolean => !readLogoutState() && !dataDb.wasDeleted,
+        },
+      }),
+    ]);
+    this.ds = await toDataStore(dataDb);
+    this.indexDs = await toDataStore(indexDb);
     if (encryptionKey) {
-      kvPrimitives = new EncryptedKvPrimitives(kvPrimitives, encryptionKey);
-      await (kvPrimitives as EncryptedKvPrimitives).init();
       console.log("Enabled client-side encryption");
     }
-    this.ds = new DataStore(kvPrimitives);
 
     this.pageMetaAugmenter = new Augmenter(this.ds, ["aug", "pageMeta"]);
     this.commandAugmenter = new Augmenter(this.ds, ["aug", "command"]);
@@ -284,12 +312,14 @@ export class Client {
     this.contentManager = new ContentManager(this);
     if (!(await waitForLogout())) {
       this.ds.kv.close();
+      this.indexDs.kv.close();
       return;
     }
     registerLogoutParticipant(() => saveCurrentEditor(this));
 
     this.objectIndex = new ObjectIndex(
       this.ds,
+      this.indexDs,
       this.config,
       this.eventHook,
       this.mq,
@@ -1507,6 +1537,7 @@ export class Client {
 
     console.log("Clearing data store");
     await this.ds.kv.clear();
+    await this.indexDs.kv.clear();
     console.log("Clearing complete.");
   }
 
