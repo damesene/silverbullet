@@ -59,12 +59,8 @@ export class DataStore {
     return this.kv.batchDelete(keys);
   }
 
-  async batchDeletePrefix(prefix: KvKey): Promise<void> {
-    const keys: KvKey[] = [];
-    for await (const { key } of this.kv.query({ prefix })) {
-      keys.push(key);
-    }
-    return this.batchDelete(keys);
+  batchDeletePrefix(prefix: KvKey): Promise<void> {
+    return this.kv.deletePrefix(prefix);
   }
 
   query<T = any>(options: KvQueryOptions): AsyncIterableIterator<KV<T>> {

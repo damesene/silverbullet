@@ -45,6 +45,20 @@ test("Test Encrypted KV Primitives", async () => {
   const [deletedValue] = await kv.batchGet([["person", "alice"]]);
   expect(deletedValue).toEqual(undefined);
 
+  await kv.batchSet([
+    { key: ["person", "carol"], value: { name: "Carol", age: 40 } },
+    { key: ["personx", "dave"], value: { name: "Dave", age: 50 } },
+  ]);
+  await kv.deletePrefix(["person"]);
+  const afterPrefixDelete = await kv.batchGet([
+    ["person", "bob"],
+    ["person", "carol"],
+    ["personx", "dave"],
+  ]);
+  expect(afterPrefixDelete[0]).toEqual(undefined);
+  expect(afterPrefixDelete[1]).toEqual(undefined);
+  expect(afterPrefixDelete[2].name).toEqual("Dave");
+
   console.log(memoryKv);
 
   await kv.clear();

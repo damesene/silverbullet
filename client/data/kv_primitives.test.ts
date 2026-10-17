@@ -65,4 +65,20 @@ export async function allTests(db: KvPrimitives) {
   for await (const _entry of db.query({ prefix: ["test"] })) {
     throw new Error("This should not happen");
   }
+
+  // deletePrefix only removes keys under the prefix, not siblings sharing
+  // the same string prefix
+  await db.batchSet([
+    { key: ["del", "a"], value: 1 },
+    { key: ["del", "b", "c"], value: 2 },
+    { key: ["delx", "a"], value: 3 },
+  ]);
+  await db.deletePrefix(["del"]);
+  const afterDelete = await db.batchGet([
+    ["del", "a"],
+    ["del", "b", "c"],
+    ["delx", "a"],
+    ["kv", "test2"],
+  ]);
+  expect(afterDelete).toEqual([undefined, undefined, 3, "Hello2.1"]);
 }

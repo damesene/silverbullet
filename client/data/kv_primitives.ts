@@ -11,6 +11,12 @@ export type KvPrimitives = {
 
   batchDelete(keys: KvKey[]): Promise<void>;
 
+  /**
+   * Deletes all keys under a prefix, matching whole key parts (["del"] does
+   * not cover ["delx", ...]), without reading them first
+   */
+  deletePrefix(prefix: KvKey): Promise<void>;
+
   query<T = any>(options: KvQueryOptions): AsyncIterableIterator<KV<T>>;
 
   /**

@@ -113,6 +113,18 @@ export class MemoryKvPrimitives implements KvPrimitives {
     return Promise.resolve();
   }
 
+  async deletePrefix(prefix: KvKey): Promise<void> {
+    // Match whole key parts (like the IndexedDB range), not raw string prefixes
+    const prefixStr = [...prefix, ""].join(memoryKeySeparator);
+    const keys: KvKey[] = [];
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefixStr)) {
+        keys.push(key.split(memoryKeySeparator));
+      }
+    }
+    await this.batchDelete(keys);
+  }
+
   toJSON(): Record<string, any> {
     const result: Record<string, any> = {};
     for (const [key, value] of this.store) {

@@ -73,18 +73,20 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
     ]);
   }
 
+  // One range request instead of reading every key and deleting it
+  // individually
+  async deletePrefix(prefix: KvKey): Promise<void> {
+    const tx = this.db.transaction(objectStoreName, "readwrite");
+    await Promise.all([tx.store.delete(this.prefixRange(prefix)), tx.done]);
+  }
+
   // Important IndexedDB limitation: no asynchronous processing can happen
   // in the body of the for await: https://stackoverflow.com/a/51898463
   async *query({ prefix }: KvQueryOptions): AsyncIterableIterator<KV> {
     idbStats.scans++;
     const tx = this.db.transaction(objectStoreName, "readonly");
     prefix = prefix || [];
-    for await (const entry of tx.store.iterate(
-      IDBKeyRange.bound(
-        this.buildKey([...prefix, ""]),
-        this.buildKey([...prefix, "\uffff"]),
-      ),
-    )) {
+    for await (const entry of tx.store.iterate(this.prefixRange(prefix))) {
       idbStats.rowsScanned++;
       yield { key: this.extractKey(entry.key), value: entry.value };
     }
@@ -93,16 +95,19 @@ export class IndexedDBKvPrimitives implements KvPrimitives {
   countQuery({ prefix }: KvQueryOptions): Promise<number> {
     const tx = this.db.transaction(objectStoreName, "readonly");
     prefix = prefix || [];
-    return tx.store.count(
-      IDBKeyRange.bound(
-        this.buildKey([...prefix, ""]),
-        this.buildKey([...prefix, "\uffff"]),
-      ),
-    );
+    return tx.store.count(this.prefixRange(prefix));
   }
 
   close() {
     this.db.close();
+  }
+
+  // All keys under `prefix`, matching whole key parts
+  private prefixRange(prefix: KvKey): IDBKeyRange {
+    return IDBKeyRange.bound(
+      this.buildKey([...prefix, ""]),
+      this.buildKey([...prefix, "\uffff"]),
+    );
   }
 
   private buildKey(key: KvKey): string {

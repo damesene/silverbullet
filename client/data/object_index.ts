@@ -846,18 +846,9 @@ export class ObjectIndex {
    */
   public async clearIndex(): Promise<void> {
     this.invalidateScanMemo();
-    const allKeys: KvKey[] = [];
-    for await (const { key } of this.ds.query({ prefix: [indexKey] })) {
-      allKeys.push(key);
-    }
-    for await (const { key } of this.ds.query({ prefix: [pageKey] })) {
-      allKeys.push(key);
-    }
-    const deleteChunkSize = 500;
-    for (let i = 0; i < allKeys.length; i += deleteChunkSize) {
-      await this.ds.batchDelete(allKeys.slice(i, i + deleteChunkSize));
-    }
-    console.log("Deleted", allKeys.length, "keys from the index");
+    await this.ds.batchDeletePrefix([indexKey]);
+    await this.ds.batchDeletePrefix([pageKey]);
+    console.log("Cleared the index");
   }
 
   /**

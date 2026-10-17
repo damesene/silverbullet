@@ -91,6 +91,12 @@ export class EncryptedKvPrimitives implements KvPrimitives {
     await this.wrapped.batchDelete(encryptedKeys);
   }
 
+  // Key parts are encrypted deterministically and individually, so the
+  // encrypted prefix matches exactly the encrypted keys under it
+  async deletePrefix(prefix: KvKey): Promise<void> {
+    await this.wrapped.deletePrefix(await this.encryptKey(prefix));
+  }
+
   async *query({ prefix }: KvQueryOptions): AsyncIterableIterator<KV> {
     const encryptedResults: KV[] = [];
     for await (const entry of this.wrapped.query({
