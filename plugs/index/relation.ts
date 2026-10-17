@@ -22,7 +22,7 @@ import {
   renderToText,
   traverseTree,
 } from "@silverbulletmd/silverbullet/lib/tree";
-import { index, lua, space } from "@silverbulletmd/silverbullet/syscalls";
+import { index, lua } from "@silverbulletmd/silverbullet/syscalls";
 import type {
   ObjectValue,
   PageMeta,
@@ -32,6 +32,7 @@ import {
   wikiLinkRegex,
 } from "../../client/markdown_parser/constants.ts";
 import { collectAnchor } from "./anchor.ts";
+import { lookupPathsBatched } from "./batched_lookup.ts";
 import type { FrontMatter } from "./frontmatter.ts";
 import { parseDeclaredNames, identityId } from "./identity.ts";
 import { buildLineIndex, extractSnippet } from "./snippet.ts";
@@ -722,7 +723,7 @@ async function resolvePageTargets(ctx: EmitCtx, text: string): Promise<void> {
   if (candidates.length === 0) return;
 
   const uniqueTargets = [...new Set(candidates.map((r) => r.to))];
-  const lookups = await space.lookupPaths(
+  const lookups = await lookupPathsBatched(
     uniqueTargets.map((target) => `${target}.md`),
   );
   const index = lookupIndex(lookups);
