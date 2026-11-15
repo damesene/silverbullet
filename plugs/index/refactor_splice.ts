@@ -16,6 +16,7 @@
 // `[text](OldName#hdr)`
 // `[text](/OldName)`
 // `[text](<OldName with spaces>)`
+// `[text](OldName "title")`
 // `[![alt](image.png)](OldName)`
 
 import {
@@ -27,10 +28,7 @@ import {
   renderToText,
   traverseTree,
 } from "@silverbulletmd/silverbullet/lib/tree";
-import {
-  childrenWithin,
-  markdownLinkParts,
-} from "../../client/markdown_parser/markdown_link.ts";
+import { markdownLinkParts } from "../../client/markdown_parser/markdown_link.ts";
 
 export type SpliceArgs = {
   text: string;
@@ -40,9 +38,9 @@ export type SpliceArgs = {
   newWikiName?: string;
   // Page that owns the reference being rewritten (for relative-path math).
   pageToEdit: string;
-  // Parse tree of the page before this batch of splices, to find the
-  // destination of a markdown link. Splices are applied from the end of the
-  // page, so its positions still hold up to the end of `range`.
+  // Parse tree of the page before this batch of splices, to find the url of
+  // a markdown link. Splices are applied from the end of the page, so its
+  // positions still hold up to the end of `range`.
   tree: ParseTree;
 };
 
@@ -62,44 +60,37 @@ export function spliceReference(args: SpliceArgs): string {
     return spliceWikilink(text, start, end, oldName, newWikiName, newName);
   }
   if (slice.startsWith("[")) {
-    const destination = markdownLinkDestinationAt(tree, range);
+    const url = markdownLinkUrlAt(tree, range);
     // Leave the link alone if the text no longer holds what was parsed, as
     // on a CRLF page, whose carriage returns the parser drops
-    if (
-      !destination ||
-      text.substring(...destination.range) !== destination.text
-    ) {
+    if (!url || text.substring(...url.range) !== url.text) {
       return text;
     }
-    return spliceMarkdownLink(text, destination.range, newName, pageToEdit);
+    return spliceMarkdownLink(text, url.range, newName, pageToEdit);
   }
   return text;
 }
 
-/** The destination of the markdown link or image spanning exactly `range` */
-function markdownLinkDestinationAt(
+/** The url of the markdown link or image spanning exactly `range` */
+function markdownLinkUrlAt(
   tree: ParseTree,
   [from, to]: [number, number],
 ): { range: [number, number]; text: string } | null {
-  let destination: { range: [number, number]; text: string } | null = null;
+  let url: { range: [number, number]; text: string } | null = null;
   traverseTree(tree, (n) => {
-    if (destination || n.from! > from || n.to! < to) return true;
+    if (url || n.from! > from || n.to! < to) return true;
     if (n.from !== from || n.to !== to) return false;
     if (n.type !== "Link" && n.type !== "Image") return false;
-    const children = n.children ?? [];
-    const parts = markdownLinkParts(children);
+    const parts = markdownLinkParts(n.children ?? []);
     if (parts) {
-      const { destinationFrom, destinationTo } = parts;
-      destination = {
-        range: [destinationFrom, destinationTo],
-        text: childrenWithin(children, destinationFrom, destinationTo)
-          .map(renderToText)
-          .join(""),
+      url = {
+        range: [parts.url.from!, parts.url.to!],
+        text: renderToText(parts.url),
       };
     }
     return true;
   });
-  return destination;
+  return url;
 }
 
 function spliceWikilink(
@@ -144,7 +135,7 @@ function spliceMarkdownLink(
   newName: string,
   pageToEdit: string,
 ): string {
-  // The destination: `url` or `<url with spaces>`
+  // `url` or `<url with spaces>`
   const url = text.substring(start, end);
   const angled = url.startsWith("<") && url.endsWith(">");
   const urlBody = angled ? url.slice(1, -1) : url;

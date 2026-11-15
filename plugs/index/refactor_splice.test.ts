@@ -189,6 +189,14 @@ describe("markdown links around an image", () => {
   });
 });
 
+describe("markdown links with a title", () => {
+  test("rewrites the url and keeps the title", () => {
+    expect(
+      splice('See [a](Old "see ](x").', '[a](Old "see ](x")', "Old", "New"),
+    ).toBe('See [a](New "see ](x").');
+  });
+});
+
 describe("markdown links with parentheses in the url", () => {
   test("rewrites the whole url", () => {
     expect(splice("[a](Old(1))", "[a](Old(1))", "Old(1)", "New")).toBe(

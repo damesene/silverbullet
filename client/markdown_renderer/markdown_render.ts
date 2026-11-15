@@ -22,7 +22,10 @@ import * as TagConstants from "../../plugs/index/constants.ts";
 import { parseHtmlTag } from "../codemirror/syntax/html_element.ts";
 import { resolveIconMarkup } from "../lib/icon.ts";
 import { pageByPath } from "../lib/page_meta.ts";
-import { markdownLinkParts } from "../markdown_parser/markdown_link.ts";
+import {
+  childrenWithin,
+  markdownLinkParts,
+} from "../markdown_parser/markdown_link.ts";
 import { Fragment, RawHtml, renderHtml, type Tag } from "./html_render.ts";
 import { CustomSyntaxRenderedHtmlType, createMediaElement } from "./inline.ts";
 import { attributeTag, wikiLinkTag } from "./inline_tags.ts";
@@ -322,11 +325,15 @@ function render(t: ParseTree, options: MarkdownRenderOptions = {}): Tag | null {
         body: "",
       };
     case "Link": {
-      const linkTextChildren = t.children!.slice(1, -4);
       const parts = markdownLinkParts(t.children!);
       if (!parts) {
         return renderToText(t);
       }
+      const linkTextChildren = childrenWithin(
+        t.children!,
+        parts.textFrom,
+        parts.textTo,
+      );
       return {
         name: "a",
         attrs: {

@@ -1079,3 +1079,15 @@ test("markdown links on a CRLF page keep their target and text", async () => {
     ["b.png", "a"],
   ]);
 });
+
+test("a markdown link title is not part of the target", async () => {
+  const { space } = createMockSystem();
+  await space.writePage("Target", "");
+  const text = 'See [the target](Target.md "Tip").';
+  const tree = parseMarkdown(text);
+  const fm = extractFrontMatter(tree);
+  const objects = await indexRelations(pageMeta("Source"), fm, tree, text);
+
+  const r = objects.find((o) => o.tag === "relation");
+  expect(r).toMatchObject({ to: "Target", toTag: "page", alias: "the target" });
+});

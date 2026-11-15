@@ -54,6 +54,14 @@ test("plain links keep their mark and hidden syntax", () => {
   });
 });
 
+test("a link title is not part of the href", () => {
+  expect(decorations('[a](Page.md "Tip")')[1]).toEqual({
+    from: 1,
+    to: 2,
+    href: "Page.md",
+  });
+});
+
 test("a link with empty text gets no live preview", () => {
   expect(decorations("[](Page.md)")).toEqual([]);
 });

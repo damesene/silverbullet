@@ -39,7 +39,7 @@ export function linkPlugin(client: Client) {
           return;
         }
 
-        let url = state.sliceDoc(parts.destinationFrom, parts.destinationTo);
+        let url = state.sliceDoc(parts.url.from, parts.url.to);
 
         if (isLocalURL(url)) {
           url = resolveMarkdownLink(client.currentName(), decodeURI(url));

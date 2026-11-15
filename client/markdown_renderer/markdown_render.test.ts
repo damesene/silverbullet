@@ -527,3 +527,12 @@ test("a link around an image links to its own target and shows the image", () =>
     vi.unstubAllGlobals();
   }
 });
+
+test("a markdown link with a title renders only its text", () => {
+  const html = renderMarkdownToHtml(
+    parse(extendedMarkdownLanguage, '[home](https://example.com "Tip" )'),
+  );
+  expect(html).toBe(
+    '<span class="p"><a href="https://example.com" target="_blank">home</a></span>',
+  );
+});

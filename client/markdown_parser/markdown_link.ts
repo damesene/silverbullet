@@ -9,10 +9,6 @@ export type MarkdownLinkParts<T extends LinkChild> = {
   textFrom: number;
   /** Where the link text ends */
   textTo: number;
-  /** Where the part between `(` and `)`, the url and any title, starts */
-  destinationFrom: number;
-  /** Where the part between `(` and `)` ends */
-  destinationTo: number;
   /** The url, without any title */
   url: T;
 };
@@ -34,14 +30,8 @@ export function markdownLinkParts<T extends LinkChild>(
   if (marks.length < 4 || !url) {
     return null;
   }
-  const [open, close, paren] = marks;
-  return {
-    textFrom: open.to!,
-    textTo: close.from!,
-    destinationFrom: paren.to!,
-    destinationTo: marks[marks.length - 1].from!,
-    url,
-  };
+  const [open, close] = marks;
+  return { textFrom: open.to!, textTo: close.from!, url };
 }
 
 /** The children within `from`..`to`, such as those of a link's text */

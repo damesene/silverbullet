@@ -333,10 +333,7 @@ function emitMarkdownLink(ctx: EmitCtx, n: ParseTree): boolean {
   // so on CRLF pages the node positions are not page text offsets
   const textOf = (from: number, to: number) =>
     childrenWithin(children, from, to).map(renderToText).join("");
-  const target = markdownLinkTarget(
-    ctx.pageMeta.name,
-    textOf(parts.destinationFrom, parts.destinationTo),
-  );
+  const target = markdownLinkTarget(ctx.pageMeta.name, renderToText(parts.url));
   if (!target) return true;
   emitTextualEdge(ctx, {
     ...innermostContainer(n, ctx.pageMeta.name),

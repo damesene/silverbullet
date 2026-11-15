@@ -148,9 +148,8 @@ export function directiveWrappers(
         out.unshift({ tag: "span", attrs: { class: "sb-highlight" } });
         break;
       case "Link": {
-        const parts = markdownLinkPartsOfNode(p);
-        const url =
-          parts && state.sliceDoc(parts.destinationFrom, parts.destinationTo);
+        const urlNode = markdownLinkPartsOfNode(p)?.url;
+        const url = urlNode && state.sliceDoc(urlNode.from, urlNode.to);
         if (!url) break;
         out.unshift({
           tag: "a",
