@@ -23,6 +23,7 @@ import { listBulletPlugin } from "../syntax/list.ts";
 import { tablePlugin } from "../syntax/table.ts";
 import { taskListPlugin } from "../syntax/task.ts";
 import { cleanWikiLinkPlugin } from "../syntax/wiki_link.ts";
+import { blockRendererPlugin } from "../widgets/block_renderer.ts";
 import { customSyntaxPlugin } from "../widgets/custom_syntax_widget.ts";
 import { htmlBlockPlugin, htmlInlinePlugin } from "../widgets/html_widget.ts";
 import { luaDirectivePlugin } from "../widgets/lua_directive.ts";
@@ -91,6 +92,7 @@ export function cleanModePlugins(client: Client) {
     htmlInlinePlugin(client),
     htmlBlockPlugin(client),
     tablePlugin(client),
+    blockRendererPlugin(client),
     cleanEscapePlugin(),
     ...footnotePlugin(() => client.editorView),
   ] as Extension[];

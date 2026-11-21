@@ -19,6 +19,14 @@ Available keys:
 * `renderWidget`: (optional) Callback `function(body, pageName)` returning widget content for live editor preview. Previously named `render`, which is still supported for backwards compatibility.
 * `renderHtml`: Callback `function(body, pageName)` returning an HTML string or `HTMLElement` (e.g. via `dom.*`) for use when rendering to HTML.
 
+## syntax.renderBlock(nodeName, spec)
+Draws a built-in markdown block (e.g. `"Table"`) with your own renderer in the editor, in place of SilverBullet's, wherever the cursor is not in it. The block's source stays the page's text. Active after the next editor state rebuild.
+
+Available keys:
+* `render`: Callback `function(source, ctx)` returning the block's `HTMLElement` (or a promise of one). `ctx` has `pageName` and `from` (where the source starts in the page).
+* `update`: (optional) Callback `function(element, source, ctx)` bringing the element drawn before up to a changed source, returning `true`; anything else draws it anew with `render`. May return a promise: the element stays meanwhile.
+* `destroy`: (optional) Callback `function(element)` called once the element is gone.
+
 # Implementation
 ```space-lua
 -- priority: 99
@@ -39,5 +47,14 @@ function syntax.define(spec)
     end
   end
   config.merge({"syntaxExtensions", spec.name}, spec)
+end
+
+--- Draws a built-in markdown block (e.g. "Table") with your own renderer in the editor; active after the next editor state rebuild.
+--- @param nodeName string the block's node name
+--- @param spec table { render: function(source, ctx), update?: function(element, source, ctx), destroy?: function(element) }
+--- @see API/syntax
+function syntax.renderBlock(nodeName, spec)
+  if not spec or not spec.render then error("syntax.renderBlock requires 'render'") end
+  config.set({"blockRenderers", nodeName}, spec)
 end
 ```

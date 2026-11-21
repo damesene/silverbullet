@@ -20,6 +20,7 @@ import {
   isCursorInRange,
 } from "../util.ts";
 import { registerWidgetMenu } from "../widgets/block_menu.ts";
+import { blockRendererFor } from "../widgets/block_renderer.ts";
 import { blockSpanAt } from "../widgets/block_span.ts";
 import { registerMarkdownWidget } from "../widgets/code_widget.ts";
 import { widgetMenuItem } from "../widgets/widget_menu.ts";
@@ -166,6 +167,8 @@ export function tablePlugin(editor: Client) {
         const { from, to, name } = node;
         if (name !== "Table") return;
         if (isCursorInRange(state, [from, to])) return;
+        // Drawn by the space's own renderer (blockRendererPlugin)
+        if (blockRendererFor(editor, "Table")) return;
 
         hideBlockSource(widgets, state, from, to, "start");
 
