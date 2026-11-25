@@ -658,6 +658,20 @@ Shows a checklist, every item unchecked, and lets the user tick any number of th
 
 - `string[] | undefined` — The ids of the ticked items (possibly none), or undefined if dismissed.
 
+## editor.posAtCoords
+`editor.posAtCoords(x, y)`
+
+Returns the document position nearest to a point in the window, e.g. where something was dropped.
+
+**Parameters:**
+
+- `x` (`number`) — Pixels from the window’s left edge, like a mouse event’s `clientX`.
+- `y` (`number`) — Pixels from the window’s top edge, like a mouse event’s `clientY`.
+
+**Returns:**
+
+- `number | undefined` — The offset, or undefined if there’s no editor.
+
 ## editor.posAtDOM
 `editor.posAtDOM(node)`
 

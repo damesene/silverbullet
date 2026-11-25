@@ -381,6 +381,50 @@ export function editorSyscalls(client: Client): SysCallMapping {
         },
       ],
     },
+    "editor.posAtCoords": {
+      callback: (_ctx, x: unknown, y: unknown): number | undefined => {
+        // Unset while booting
+        const view = client.editorView as EditorView | undefined;
+        if (
+          !view ||
+          typeof x !== "number" ||
+          typeof y !== "number" ||
+          !Number.isFinite(x) ||
+          !Number.isFinite(y)
+        ) {
+          return undefined;
+        }
+        try {
+          // Estimate positions outside the rendered viewport instead of returning null
+          return view.posAtCoords({ x, y }, false);
+        } catch {
+          // Layout can't be read during an update
+          return undefined;
+        }
+      },
+      description:
+        "Returns the document position nearest to a point in the window, e.g. where something was dropped.",
+      parameters: [
+        {
+          name: "x",
+          type: "number",
+          description:
+            "Pixels from the window's left edge, like a mouse event's `clientX`.",
+        },
+        {
+          name: "y",
+          type: "number",
+          description:
+            "Pixels from the window's top edge, like a mouse event's `clientY`.",
+        },
+      ],
+      returns: [
+        {
+          type: "number | undefined",
+          description: "The offset, or undefined if there's no editor.",
+        },
+      ],
+    },
     "editor.save": {
       callback: () => {
         return client.save(true);
